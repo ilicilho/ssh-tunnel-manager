@@ -282,6 +282,12 @@ class TunnelManager {
         connectionStatus[tunnel.id] == .connected
     }
 
+    /// Whether at least one tunnel is currently connected — drives the
+    /// highlighted menu bar icon.
+    var hasConnectedTunnel: Bool {
+        connectionStatus.values.contains(.connected)
+    }
+
     func status(for tunnel: Tunnel) -> ConnectionStatus {
         connectionStatus[tunnel.id] ?? .disconnected
     }

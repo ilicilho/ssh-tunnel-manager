@@ -23,7 +23,7 @@ struct SSHTunnelManagerApp: App {
             MenuBarView()
                 .environment(appDelegate.tunnelManager)
         } label: {
-            Image(systemName: "point.3.connected.trianglepath.dotted")
+            MenuBarIcon(tunnelManager: appDelegate.tunnelManager)
         }
         .menuBarExtraStyle(.window)
 
@@ -45,6 +45,56 @@ struct SSHTunnelManagerApp: App {
             }
         }
     }
+}
+
+/// The menu bar icon. Plain symbol while nothing is connected; once any tunnel
+/// is up it switches to a filled badge with the symbol cut out of it, so the
+/// state is readable at a glance. Both are template images, so the system
+/// colors them for a light or dark menu bar.
+///
+/// A separate View (rather than inline in the Scene) so it re-renders through
+/// Observation when the manager's connection state changes.
+struct MenuBarIcon: View {
+    let tunnelManager: TunnelManager
+
+    static let symbolName = "point.3.connected.trianglepath.dotted"
+
+    var body: some View {
+        if tunnelManager.hasConnectedTunnel {
+            Image(nsImage: Self.connectedImage)
+        } else {
+            Image(systemName: Self.symbolName)
+        }
+    }
+
+    /// Drawn by hand because a MenuBarExtra label ignores SwiftUI styling
+    /// (background, opacity, foreground color) — only the image itself counts.
+    static let connectedImage: NSImage = {
+        let size = NSSize(width: 26, height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 4.5, yRadius: 4.5).fill()
+
+            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+            guard let symbol = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) else { return true }
+            let origin = NSPoint(
+                x: rect.midX - symbol.size.width / 2,
+                y: rect.midY - symbol.size.height / 2
+            )
+            // Punch the symbol out of the badge instead of painting over it.
+            symbol.draw(
+                in: NSRect(origin: origin, size: symbol.size),
+                from: .zero,
+                operation: .destinationOut,
+                fraction: 1
+            )
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = "SSH Tunnel Manager — connected"
+        return image
+    }()
 }
 
 @MainActor
