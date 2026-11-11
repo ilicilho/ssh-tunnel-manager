@@ -421,13 +421,23 @@ class TunnelManager {
             return
         }
 
+        // Password auth needs a saved password to hand to ssh. Without one the
+        // connect can only fail, so fail sticky instead of letting the monitor
+        // respawn a doomed process every few seconds.
+        if tunnel.usePassword && !PasswordStore.exists(for: tunnel.id) {
+            lastErrors[tunnel.id] = String(localized: "No password saved for this tunnel — enter one under SSH Connection.")
+            shouldBeConnected.remove(tunnel.id)
+            connectionStatus[tunnel.id] = .disconnected
+            return
+        }
+
         process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         var arguments = ["-N"] + forwardArguments
 
         // Connection options. In host mode always pass -p (and -i if set); in
         // alias mode let ~/.ssh/config supply them, overriding -p only for a
         // non-default port.
-        if !tunnel.useAlias, let identityFile = tunnel.identityFile, !identityFile.isEmpty {
+        if !tunnel.useAlias, !tunnel.usePassword, let identityFile = tunnel.identityFile, !identityFile.isEmpty {
             arguments.append(contentsOf: ["-i", (identityFile as NSString).expandingTildeInPath])
             // Use only this key — don't also offer every key in the ssh-agent,
             // which can trip the server's auth-attempt limit ("Too many
@@ -485,10 +495,8 @@ class TunnelManager {
             "-o", "ExitOnForwardFailure=yes",
             "-o", "ServerAliveInterval=\(tunnel.serverAliveInterval ?? Tunnel.defaultServerAliveInterval)",
             "-o", "ServerAliveCountMax=\(tunnel.serverAliveCountMax ?? Tunnel.defaultServerAliveCountMax)",
-            // Retry the initial connection a couple of times before giving up,
-            // and never block on an interactive prompt the GUI can't answer.
+            // Retry the initial connection a couple of times before giving up.
             "-o", "ConnectionAttempts=2",
-            "-o", "BatchMode=yes",
             "-o", "RequestTTY=no",
             "-o", "RemoteCommand=none",
             "-o", "ControlMaster=no"
@@ -509,6 +517,25 @@ class TunnelManager {
         }
         if let connectTimeout = tunnel.connectTimeout {
             arguments.append(contentsOf: ["-o", "ConnectTimeout=\(connectTimeout)"])
+        }
+        if tunnel.usePassword {
+            // BatchMode would disable password auth outright, so it's replaced
+            // by an askpass helper (this executable — see AskpassHelper) that
+            // answers the password prompt from the Keychain and declines every
+            // other prompt, keeping the connection just as non-interactive.
+            // Offer the password only, and only once: skipping keys avoids
+            // burning the server's auth attempts on agent keys first, and a
+            // single prompt makes a wrong password fail fast.
+            arguments.append(contentsOf: [
+                "-o", "PreferredAuthentications=password,keyboard-interactive",
+                "-o", "PubkeyAuthentication=no",
+                "-o", "NumberOfPasswordPrompts=1"
+            ])
+            process.environment = AskpassHelper.environment(for: tunnel.id)
+            process.standardInput = FileHandle.nullDevice
+        } else {
+            // Never block on an interactive prompt the GUI can't answer.
+            arguments.append(contentsOf: ["-o", "BatchMode=yes"])
         }
 
         process.arguments = arguments
@@ -620,8 +647,19 @@ class TunnelManager {
             // reconnect retries and is cleared only once the tunnel establishes
             // (grace task) or the user stops it (disconnect) — so the UI shows a
             // stable reason instead of a bare spinner, and never flickers.
+            let usesPassword = tunnels.first(where: { $0.id == tunnelID })?.usePassword ?? false
             if !cleanStop {
-                lastErrors[tunnelID] = classifyFailure(stderr: stderr, exitCode: exitCode)
+                lastErrors[tunnelID] = classifyFailure(stderr: stderr, exitCode: exitCode, usesPassword: usesPassword)
+            }
+            // A rejected password won't start working on its own, and replaying
+            // it every few seconds is how accounts get locked out and IPs get
+            // banned (fail2ban, PAM faillock). Stop here; the user reconnects
+            // after fixing the password.
+            if usesPassword && !cleanStop && Self.isAuthFailure(stderr) {
+                shouldBeConnected.remove(tunnelID)
+                connectionStatus[tunnelID] = .disconnected
+                updatePIDFile()
+                return
             }
             // Announce only genuine drops of connections that were actually up.
             // A manual disconnect clears shouldBeConnected first (silent), a flap
@@ -642,11 +680,19 @@ class TunnelManager {
     /// OpenSSH wording isn't a stable API and varies by version/locale, so this
     /// degrades gracefully: a known phrase → a friendly line, otherwise the last
     /// non-empty stderr line, otherwise the exit code. It is never blank.
-    private func classifyFailure(stderr: String, exitCode: Int32) -> String {
+    private static func isAuthFailure(_ stderr: String) -> Bool {
         let s = stderr.lowercased()
-        if s.contains("permission denied")
+        return s.contains("permission denied")
             || s.contains("too many authentication failures")
-            || s.contains("no more authentication methods") {
+            || s.contains("no more authentication methods")
+    }
+
+    private func classifyFailure(stderr: String, exitCode: Int32, usesPassword: Bool) -> String {
+        let s = stderr.lowercased()
+        if Self.isAuthFailure(stderr) {
+            if usesPassword {
+                return String(localized: "Authentication failed — check the saved password. Not retrying, to avoid locking the account.")
+            }
             return String(localized: "Authentication failed — check your key or identity file.")
         }
         if s.contains("connection refused") {
@@ -794,7 +840,32 @@ class TunnelManager {
             disconnect(tunnel: tunnel)
         }
         items.removeAll { $0.tunnel?.id == tunnel.id }
+        PasswordStore.delete(for: tunnel.id)
         Task { await saveTunnels() }
+    }
+
+    // MARK: - Passwords
+
+    /// Whether a password is saved for the tunnel. The value itself is never
+    /// exposed to the UI — it can only be replaced or removed.
+    func hasPassword(for tunnel: Tunnel) -> Bool {
+        PasswordStore.exists(for: tunnel.id)
+    }
+
+    /// Save or replace the tunnel's password, then restart it if it's active
+    /// so the new password takes effect.
+    func setPassword(_ password: String, for tunnel: Tunnel) throws {
+        try PasswordStore.save(password, for: tunnel.id, label: tunnel.name)
+        lastErrors.removeValue(forKey: tunnel.id)
+        guard let current = tunnels.first(where: { $0.id == tunnel.id }) else { return }
+        if shouldBeConnected.contains(current.id) || processIDs[current.id] != nil {
+            disconnect(tunnel: current)
+            connect(tunnel: current)
+        }
+    }
+
+    func removePassword(for tunnel: Tunnel) {
+        PasswordStore.delete(for: tunnel.id)
     }
 
     func updateTunnel(_ tunnel: Tunnel) {
@@ -849,6 +920,7 @@ class TunnelManager {
         var clone = tunnel
         clone.id = UUID()
         clone.name = "\(tunnel.name) (Copy)"
+        PasswordStore.copy(from: tunnel.id, to: clone.id, label: clone.name)
         if let index = items.firstIndex(where: { $0.tunnel?.id == tunnel.id }) {
             items.insert(.tunnel(clone), at: index + 1)
         } else {

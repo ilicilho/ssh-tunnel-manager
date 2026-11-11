@@ -110,6 +110,13 @@ struct Tunnel: Identifiable, Codable, Hashable {
     // nil/empty keeps ControlPath=none.
     var controlPath: String?
 
+    // Authenticate with a password instead of a key. Only this flag lives in
+    // the config file — the password itself is kept in the macOS Keychain
+    // (see PasswordStore), keyed by the tunnel's id, and is handed to ssh
+    // through an askpass helper at connect time. false matches today's
+    // behavior (key / agent / ~/.ssh/config).
+    var usePassword: Bool
+
     /// Fallback used when a tunnel doesn't override `serverAliveInterval`.
     static let defaultServerAliveInterval = 30
     /// Fallback used when a tunnel doesn't override `serverAliveCountMax`.
@@ -134,7 +141,8 @@ struct Tunnel: Identifiable, Codable, Hashable {
         extraOptions: String? = nil,
         localCommand: String? = nil,
         customCommand: String? = nil,
-        controlPath: String? = nil
+        controlPath: String? = nil,
+        usePassword: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -155,6 +163,7 @@ struct Tunnel: Identifiable, Codable, Hashable {
         self.localCommand = localCommand
         self.customCommand = customCommand
         self.controlPath = controlPath
+        self.usePassword = usePassword
     }
 
     /// True when `other` would produce the same `ssh` invocation as `self`.
@@ -175,7 +184,8 @@ struct Tunnel: Identifiable, Codable, Hashable {
         extraOptions == other.extraOptions &&
         localCommand == other.localCommand &&
         customCommand == other.customCommand &&
-        controlPath == other.controlPath
+        controlPath == other.controlPath &&
+        usePassword == other.usePassword
     }
 
     enum CodingKeys: String, CodingKey {
@@ -185,6 +195,7 @@ struct Tunnel: Identifiable, Codable, Hashable {
         case localCommand
         case customCommand
         case controlPath
+        case usePassword
         // Legacy single-mapping fields
         case localHost, localPort, remoteHost, remotePort
     }
@@ -217,6 +228,8 @@ struct Tunnel: Identifiable, Codable, Hashable {
         customCommand = try container.decodeIfPresent(String.self, forKey: .customCommand)
         // Absent in older configs — nil keeps ControlPath=none.
         controlPath = try container.decodeIfPresent(String.self, forKey: .controlPath)
+        // Absent in older configs — false keeps key-based auth.
+        usePassword = try container.decodeIfPresent(Bool.self, forKey: .usePassword) ?? false
 
         if let mappings = try container.decodeIfPresent([PortMapping].self, forKey: .portMappings),
            !mappings.isEmpty {
@@ -257,6 +270,7 @@ struct Tunnel: Identifiable, Codable, Hashable {
         try container.encodeIfPresent(localCommand, forKey: .localCommand)
         try container.encodeIfPresent(customCommand, forKey: .customCommand)
         try container.encodeIfPresent(controlPath, forKey: .controlPath)
+        try container.encode(usePassword, forKey: .usePassword)
     }
 
     var mappingsSummary: String {

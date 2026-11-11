@@ -18,6 +18,13 @@ struct TunnelDetailView: View {
     @State private var showCustomCommand: Bool
     @State private var showControlPath: Bool
     @State private var isAliasPickerPresented = false
+    // Password entry is write-only: the draft lives here just until it's saved
+    // to the Keychain, and a saved password is never loaded back into the UI —
+    // all the view knows is whether one exists.
+    @State private var passwordDraft = ""
+    @State private var hasStoredPassword = false
+    @State private var isReplacingPassword = false
+    @State private var passwordError: String?
     // Name of the network service holding the default route ("Wi-Fi",
     // "Thunderbolt Bridge", …), resolved read-only in the background for the
     // system-proxy usage rows. nil until detected (or when the default route
@@ -235,6 +242,17 @@ struct TunnelDetailView: View {
                         }
                     }
 
+                }
+
+                Picker("Authentication", selection: $editedTunnel.usePassword) {
+                    Text("Key").tag(false)
+                    Text("Password").tag(true)
+                }
+                .pickerStyle(.segmented)
+
+                if editedTunnel.usePassword {
+                    passwordEditor
+                } else if !editedTunnel.useAlias {
                     TextField("Identity File (optional)", text: Binding(
                         get: { editedTunnel.identityFile ?? "" },
                         set: { editedTunnel.identityFile = $0.isEmpty ? nil : $0 }
@@ -497,6 +515,14 @@ struct TunnelDetailView: View {
             // removing a port mapping just after a field blur saved the prior set).
             editedTunnel = tunnel
         }
+        .task(id: tunnel.id) {
+            // A different tunnel: drop any half-typed password and re-check
+            // whether this one has a saved password.
+            passwordDraft = ""
+            isReplacingPassword = false
+            passwordError = nil
+            hasStoredPassword = tunnelManager.hasPassword(for: tunnel)
+        }
         .onChange(of: focusedField) { oldValue, newValue in
             if oldValue != nil && newValue != oldValue && hasChanges {
                 saveChanges()
@@ -511,6 +537,76 @@ struct TunnelDetailView: View {
                 NetworkServiceDetector.activeService()
             }.value
         }
+    }
+
+    /// Password row. A saved password shows only as "saved" with Change/Remove;
+    /// there is deliberately no way to reveal it.
+    @ViewBuilder
+    private var passwordEditor: some View {
+        if hasStoredPassword && !isReplacingPassword {
+            LabeledContent("Password") {
+                HStack(spacing: 8) {
+                    Label("Saved", systemImage: "lock.fill")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Change…") {
+                        passwordDraft = ""
+                        passwordError = nil
+                        isReplacingPassword = true
+                    }
+                    Button("Remove", role: .destructive) {
+                        tunnelManager.removePassword(for: editedTunnel)
+                        hasStoredPassword = false
+                    }
+                }
+            }
+        } else {
+            LabeledContent(hasStoredPassword ? "New Password" : "Password") {
+                HStack(spacing: 8) {
+                    SecureField("Password", text: $passwordDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .onSubmit(savePassword)
+                    Button("Save Password", action: savePassword)
+                        .disabled(passwordDraft.isEmpty)
+                    if isReplacingPassword {
+                        Button("Cancel") {
+                            passwordDraft = ""
+                            passwordError = nil
+                            isReplacingPassword = false
+                        }
+                    }
+                }
+            }
+        }
+
+        if let passwordError {
+            Label(passwordError, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .font(.caption)
+        }
+
+        Text("Stored encrypted in the macOS Keychain, not in the config file. It can be changed or removed, but never shown here. Not used with a custom SSH command.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private func savePassword() {
+        guard !passwordDraft.isEmpty else { return }
+        // Persist the tunnel first so "use password" is saved along with it —
+        // setPassword restarts an active tunnel from the saved configuration.
+        if hasChanges {
+            saveChanges()
+        }
+        do {
+            try tunnelManager.setPassword(passwordDraft, for: editedTunnel)
+            hasStoredPassword = true
+            isReplacingPassword = false
+            passwordError = nil
+        } catch {
+            passwordError = error.localizedDescription
+        }
+        passwordDraft = ""
     }
 
     private func removeMapping(_ id: UUID) {
@@ -576,7 +672,14 @@ struct TunnelDetailView: View {
         }
         cmd += " -o ServerAliveInterval=\(tunnel.serverAliveInterval ?? Tunnel.defaultServerAliveInterval)"
         cmd += " -o ServerAliveCountMax=\(tunnel.serverAliveCountMax ?? Tunnel.defaultServerAliveCountMax)"
-        cmd += " -o ConnectionAttempts=2 -o BatchMode=yes"
+        cmd += " -o ConnectionAttempts=2"
+        // Password mode can't use BatchMode (it disables password auth); the
+        // app answers the prompt itself, a pasted command prompts in the terminal.
+        if tunnel.usePassword {
+            cmd += " -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no"
+        } else {
+            cmd += " -o BatchMode=yes"
+        }
         if let connectTimeout = tunnel.connectTimeout {
             cmd += " -o ConnectTimeout=\(connectTimeout)"
         }
@@ -598,7 +701,7 @@ struct TunnelDetailView: View {
             if tunnel.port != 22 {
                 cmd += " -p \(tunnel.port)"
             }
-            if let identityFile = tunnel.identityFile, !identityFile.isEmpty {
+            if !tunnel.usePassword, let identityFile = tunnel.identityFile, !identityFile.isEmpty {
                 cmd += " -i \(identityFile) -o IdentitiesOnly=yes"
             }
         }

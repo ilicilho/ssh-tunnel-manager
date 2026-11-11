@@ -2,7 +2,18 @@ import SwiftUI
 import Darwin
 import UserNotifications
 
+/// Entry point. ssh re-invokes this executable as its askpass program for
+/// password-authenticated tunnels (see AskpassHelper); that case must be
+/// answered before any app state exists — TunnelManager's init kills the
+/// PIDs recorded by the running instance, i.e. the live tunnels.
 @main
+enum AppMain {
+    static func main() {
+        AskpassHelper.runIfInvoked()
+        SSHTunnelManagerApp.main()
+    }
+}
+
 struct SSHTunnelManagerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
