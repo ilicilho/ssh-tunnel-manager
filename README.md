@@ -41,6 +41,8 @@ This app solves that. Configure once, connect with one click.
 - **Connect/disconnect alerts** — optional sound and notification when a tunnel drops or comes back
 - **Port-conflict guard** — warns when two tunnels want the same local port and stops them from clobbering each other
 - **Per-tunnel tuning** — `ConnectTimeout`, keepalive, compression, "survive brief network drops", host-key options, and a free-text field for any other ssh flags
+- **Password authentication** — optionally log in with a password instead of a key; it's kept in the macOS Keychain, never in the config file
+- **Connected-at-a-glance icon** — the menu bar icon turns into a filled badge while any tunnel is connected
 - **SSH config aliases** — reuse hosts from your `~/.ssh/config`
 - **Launch at login** — start tunnels when your Mac boots
 - **Auto-connect** — mark tunnels to connect automatically on app launch
@@ -91,6 +93,18 @@ xcodebuild -scheme SSHTunnelManager -configuration Release
 
 Requires Xcode 15+ and macOS 14+.
 
+### Without Xcode
+
+With only the Command Line Tools (`xcode-select --install`):
+
+```bash
+packaging/build-local.sh
+```
+
+It compiles with `swiftc` and writes `build/SSHTunnelManager.app` plus a plain
+DMG. Set `VERSION=x.y.z` to stamp a version. The result is ad-hoc signed and
+built for the current architecture only.
+
 ## Usage
 
 1. Click the network icon in menu bar
@@ -130,6 +144,37 @@ Example — make a local site (`localhost:3000`) reachable at the server's publi
 - **Remote Forward**: Local `127.0.0.1:3000` → Remote `0.0.0.0:8080`
 
 Now `http://your-server:8080` reaches your Mac's `localhost:3000`. Binding to `0.0.0.0` (rather than the server's own loopback) needs **`GatewayPorts yes`** in the server's `sshd_config`; without it the port is reachable only from the server itself.
+
+### Password authentication
+
+Under **SSH Connection**, set **Authentication** to **Password**, type the
+password, and click **Save Password**. It's stored encrypted in the macOS
+Keychain (one item per tunnel) — `tunnels.json` only records that the tunnel
+uses a password. The app can replace or remove a saved password but never
+shows it.
+
+- A rejected password stops the tunnel instead of auto-retrying, so a typo
+  can't lock the account or trip fail2ban. Fix it and connect again.
+- An unknown host key still fails the connection: connect once in a terminal
+  to accept it, or enable **Skip host key check**.
+- With a **Jump Host**, the same password is offered to the bastion if it asks
+  for one.
+- Not used with a **Custom SSH command**.
+
+### Importing many port forwards
+
+`packaging/import-forwards.py` adds a pasted list of `-L` / `-R` / `-D` flags
+to a tunnel in `tunnels.json` (quit the app first — it rewrites the file on
+save):
+
+```bash
+packaging/import-forwards.py "My tunnel" --host user@server -- \
+    -L 5432:db.internal:5432 -L 127.0.0.1:8080:api.internal:80
+```
+
+An existing tunnel with that name gets the forwards appended (duplicates are
+skipped); otherwise a new one is created. The previous file is kept as
+`tunnels.json.bak`.
 
 ### Connection alerts
 
