@@ -62,7 +62,9 @@
 
 ## 安装
 
-### Homebrew
+> 本仓库是 [0fuz/ssh-tunnel-manager](https://github.com/0fuz/ssh-tunnel-manager) 的分支 (fork)，新增了 SSH 密码认证等功能，详见 [README.md](README.md)。本分支没有 Homebrew cask；下面的上游 cask 安装的是原版应用，不包含这些新增功能。
+
+### Homebrew（上游原版）
 
 ```bash
 brew install --cask 0fuz/tap/ssh-tunnel-manager
@@ -76,7 +78,7 @@ xattr -dr com.apple.quarantine /Applications/SSHTunnelManager.app
 
 ### 直接下载
 
-从 [Releases](../../releases) 下载 `SSHTunnelManager.dmg`。
+从 [Releases](https://github.com/ilicilho/ssh-tunnel-manager/releases) 下载 `SSHTunnelManager.dmg`。
 
 首次启动时，macOS 会警告该应用未经签名：
 1. 右键点击应用 → 打开，或者
@@ -85,7 +87,7 @@ xattr -dr com.apple.quarantine /Applications/SSHTunnelManager.app
 ## 从源码构建
 
 ```bash
-git clone https://github.com/0fuz/ssh-tunnel-manager.git
+git clone https://github.com/ilicilho/ssh-tunnel-manager.git
 cd ssh-tunnel-manager/SSHTunnelManager
 xcodebuild -scheme SSHTunnelManager -configuration Release
 ```

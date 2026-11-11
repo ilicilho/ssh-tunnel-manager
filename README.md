@@ -4,6 +4,14 @@
 
 A lightweight macOS menu bar app for managing SSH port forwards. No electron, no bloat — just native Swift and AppKit.
 
+> **This is a fork** of [0fuz/ssh-tunnel-manager](https://github.com/0fuz/ssh-tunnel-manager), maintained at [ilicilho/ssh-tunnel-manager](https://github.com/ilicilho/ssh-tunnel-manager). It adds:
+>
+> - **SSH password authentication** — log in with a password instead of a key. The password is stored encrypted in the macOS Keychain; the app can change or remove it but never shows it. See [Password authentication](#password-authentication).
+> - **Connected-state menu bar icon** — the icon becomes a filled badge while any tunnel is connected.
+> - **Building without Xcode** and **bulk import of port forwards** — see [Without Xcode](#without-xcode) and [Importing many port forwards](#importing-many-port-forwards).
+>
+> The unmodified upstream code is kept on the [`main`](https://github.com/ilicilho/ssh-tunnel-manager/tree/main) branch.
+
 <p align="center">
   <img src=".github/menu.png" width="30%" alt="Menu bar with grouped tunnels and per-group toggles">
 </p>
@@ -62,31 +70,31 @@ This app is free, open source, and does one thing well.
 
 ## Install
 
-### Homebrew
+This fork has no Homebrew cask. The upstream one
+(`brew install --cask 0fuz/tap/ssh-tunnel-manager`) installs the original app,
+without the additions listed above.
 
-```bash
-brew install --cask 0fuz/tap/ssh-tunnel-manager
-```
+### Direct download
 
-The app is not notarized, so on first launch right-click it in `/Applications`
-and choose Open. To skip that prompt, clear the quarantine flag once:
+Download `SSHTunnelManager.dmg` from this fork's
+[Releases](https://github.com/ilicilho/ssh-tunnel-manager/releases) page when a
+release is published there; until then, [build from source](#build-from-source).
+
+The app is not notarized, so on first launch macOS will warn about an unsigned
+app:
+1. Right-click the app in `/Applications` → Open, or
+2. System Settings → Privacy & Security → Open Anyway
+
+To skip that prompt, clear the quarantine flag once:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/SSHTunnelManager.app
 ```
 
-### Direct download
-
-Download `SSHTunnelManager.dmg` from [Releases](../../releases).
-
-On first launch, macOS will warn about unsigned app:
-1. Right-click the app → Open, or
-2. System Settings → Privacy & Security → Open Anyway
-
 ## Build from source
 
 ```bash
-git clone https://github.com/0fuz/ssh-tunnel-manager.git
+git clone https://github.com/ilicilho/ssh-tunnel-manager.git
 cd ssh-tunnel-manager/SSHTunnelManager
 xcodebuild -scheme SSHTunnelManager -configuration Release
 ```
